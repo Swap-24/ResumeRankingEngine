@@ -1,5 +1,11 @@
 from models.candidate import Candidate
 from models.job import Job
+from semantic import (
+    build_resume_text,
+    build_job_text,
+    embed,
+    similarity
+)
 
 def experience_score(candidate: Candidate, job: Job) -> float:
 
@@ -68,3 +74,14 @@ def overall_score(candidate: Candidate, job: Job) -> float:
         + behavior_score(candidate)
 
     )
+
+def semantic_score(candidate, job_embedding):
+
+    resume_embedding = embed(
+        build_resume_text(candidate)
+    )
+
+    return similarity(
+        resume_embedding,
+        job_embedding
+    ) * 30
