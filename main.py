@@ -1,6 +1,6 @@
 from loader import load_candidates
 from models.job import Job
-from ranker import rank_candidates
+from reranker import rank_candidates
 
 
 def main():
