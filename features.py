@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from unicodedata import name
 from models.candidate import Candidate
 
 
@@ -48,7 +49,9 @@ def extract_features(candidate: Candidate) -> CandidateFeatures:
 
     for skill in candidate.raw.get("skills", []):
 
-        name = skill["name"].lower()
+        name = skill.get("name", "").lower()
+        if not name:
+            continue
 
         skills.add(name)
 

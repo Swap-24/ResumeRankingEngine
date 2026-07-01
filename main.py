@@ -1,39 +1,35 @@
-from loader import load_candidates
-from models.job import Job
-from reranker import rank_candidates
+from loader import load_job
+from semantic import embed, build_job_text
+from retriever import retrieve
+from reranker import rerank
+from writer import write_submission
 
 
 def main():
 
-    job = Job(
-        title="AI Engineer",
-        required_skills=[
-            "Python",
-            "Machine Learning",
-            "TensorFlow"
-        ],
-        min_experience=5,
-        max_experience=9,
-        location="Pune"
-    )
+    print("Loading job...")
+    job = load_job(r"C:\Users\KIIT0001\Downloads\[PUB] India_runs_data_and_ai_challenge\[PUB] India_runs_data_and_ai_challenge\India_runs_data_and_ai_challenge\job_description.docx")
 
-    candidates = load_candidates(
-        "candidates.jsonl.gz"
-    )
+    print("Building job text...")
+    job_text = build_job_text(job)
 
-    top = rank_candidates(
-        candidates,
-        job,
-        top_k=100
-    )
+    print("Embedding job...")
+    job_embedding = embed(job_text)
 
-    for rank, (score, candidate) in enumerate(top, start=1):
+    print("Retrieving candidates...")
+    retrieved = retrieve(job_embedding, top_k=3000)
 
-        print(
-            rank,
-            candidate.candidate_id,
-            score
-        )
+    print(f"Retrieved {len(retrieved)} candidates")
+
+    print("Reranking...")
+    final = rerank(retrieved, job)
+
+    print(f"Final candidates: {len(final)}")
+
+    print("Writing submission...")
+    write_submission(final, "submission.csv")
+
+    print("Done!")
 
 
 if __name__ == "__main__":

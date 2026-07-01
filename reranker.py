@@ -1,25 +1,35 @@
-from heapq import nlargest
+def rerank(results, job):
 
-from models.candidate import Candidate
-from models.job import Job
-from scorer import overall_score
+    ranked = []
 
-def rank_candidates(
-    candidates: list[Candidate],
-    job: Job,
-    top_k: int = 100
-):
+    required = {skill.lower() for skill in job.required_skills}
 
-    scored = []
+    for semantic_score, feature in results:
 
-    for candidate in candidates:
+        score = semantic_score * 0.45
 
-        score = overall_score(candidate, job)
+        if feature.years_experience >= job.min_experience:
+            score += 10
 
-        scored.append((score, candidate))
+        overlap = len(feature.skills & required)
 
-    return nlargest(
-        top_k,
-        scored,
-        key=lambda x: x[0]
-    )
+        if required:
+
+            score += (overlap / len(required)) * 15
+
+        score += (feature.github_score / 100) * 5
+
+        score += (feature.recruiter_response_rate) * 5
+
+        score += (feature.interview_completion_rate) * 5
+
+        score += (feature.offer_acceptance_rate) * 5
+
+        if feature.open_to_work:
+            score += 5
+
+        ranked.append((score, feature))
+
+    ranked.sort(reverse=True, key=lambda x: x[0])
+
+    return ranked[:100]

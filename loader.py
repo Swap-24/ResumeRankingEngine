@@ -1,20 +1,16 @@
 import json
 import gzip
+import json
+from models.job import Job
 from pathlib import Path
-
 from models.candidate import Candidate
 from models.resume import Resume
 
 
 def load_candidates(path: str) -> list[Candidate]:
-    """
-    Reads a .jsonl or .jsonl.gz file and returns
-    a list of Candidate objects.
-    """
 
     candidates = []
 
-    # Decide how to open the file
     open_function = gzip.open if path.endswith(".gz") else open
 
     with open_function(path, "rt", encoding="utf-8") as file:
@@ -23,7 +19,6 @@ def load_candidates(path: str) -> list[Candidate]:
 
             line = line.strip()
 
-            # Ignore blank lines
             if not line:
                 continue
 
@@ -36,8 +31,21 @@ def load_candidates(path: str) -> list[Candidate]:
     return candidates
 
 def parse_candidate(raw: dict) -> Candidate:
+    return Candidate(candidate_id=raw.get("candidate_id", ""),raw=raw)
 
-    return Candidate(
-        candidate_id=raw["candidate_id"],
-        raw=raw
+
+
+def load_job(path: str) -> Job:
+
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    return Job(
+        title=raw.get("title", ""),
+        summary=raw.get("summary", ""),
+        required_skills=raw.get("required_skills", []),
+        preferred_skills=raw.get("preferred_skills", []),
+        min_experience=raw.get("min_experience", 0),
+        max_experience=raw.get("max_experience", 100),
+        location=raw.get("location", "")
     )

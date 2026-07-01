@@ -47,18 +47,8 @@ def build_resume_text(candidate):
 
 def build_job_text(job):
 
-    pieces = [
-
-        job.title,
-
-        job.summary,
-
-        " ".join(job.required_skills),
-
-        " ".join(job.preferred_skills)
-    ]
-
-    return "\n".join(pieces)
+    parts = [job.title,job.summary," ".join(job.required_skills)," ".join(job.preferred_skills),]
+    return "\n".join([p for p in parts if p])
 
 def similarity(vec1, vec2):
 
