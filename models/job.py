@@ -1,14 +1,18 @@
 from dataclasses import dataclass, field
 
-@dataclass
+@dataclass(slots=True)
 class Job:
-    title: str = ""
+
+    title: str
+    company: str = ""
+    location: str = ""
     summary: str = ""
-
-    required_skills: list[str] = field(default_factory=list)
-    preferred_skills: list[str] = field(default_factory=list)
-
     min_experience: float = 0
     max_experience: float = 100
-
-    location: str = ""
+    required_skills: list[str] = field(default_factory=list)
+    preferred_skills: list[str] = field(default_factory=list)
+    responsibilities: list[str] = field(default_factory=list)
+    culture: list[str] = field(default_factory=list)
+    semantic_requirements: str = ""
+    semantic_responsibilities: str = ""
+    semantic_company: str = ""
