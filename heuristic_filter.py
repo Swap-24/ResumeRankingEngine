@@ -255,9 +255,6 @@ def _check_deadweight(
 
 
 def _extract_features(raw: dict, today: date) -> CandidateFeatures:
-    """
-    Extract structured CandidateFeatures from a raw candidate dict.
-    """
     profile = raw.get("profile", {})
     signals = raw.get("redrob_signals", {})
     career = raw.get("career_history", [])

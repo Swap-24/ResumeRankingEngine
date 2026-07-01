@@ -62,17 +62,14 @@ def parse_jd(path: str) -> JobSpec:
 
 
 def _extract_title(paragraphs) -> str:
-    """Return the first non-empty paragraph styled as Title or Heading."""
     for p in paragraphs:
         if not p.text.strip():
             continue
         style = p.style.name.lower()
         if "title" in style or "heading" in style:
-            # Clean up: strip "Job Description:" prefix if present
             raw = p.text.strip()
             raw = re.sub(r"^job\s+description\s*:\s*", "", raw, flags=re.IGNORECASE)
             return raw
-    # Fallback: first non-empty paragraph
     for p in paragraphs:
         if p.text.strip():
             return p.text.strip()[:120]
