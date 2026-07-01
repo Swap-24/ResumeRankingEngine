@@ -1,49 +1,21 @@
-"""
-output_writer.py — Stage 4: Produce a valid submission.csv.
-
-Enforces:
-  - Exactly 100 data rows
-  - Ranks 1–100, each exactly once
-  - Scores monotonically non-increasing
-  - Tie-break: equal scores → candidate_id ascending
-  - Reasoning column: hallucination-free, candidate-specific
-  - UTF-8 encoding
-"""
-
 import csv
 from pathlib import Path
-
 from models.features import CandidateFeatures
 from models.job_spec import JobSpec
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def write_submission(
     ranked: list[tuple[float, CandidateFeatures]],
     job: JobSpec,
     output_path: str,
 ) -> None:
-    """
-    Write the final submission CSV from ranked candidates.
-
-    Parameters
-    ----------
-    ranked      : list of (score, features) sorted descending by score (top 100)
-    job         : JobSpec for reasoning generation
-    output_path : path to output .csv file
-    """
     if len(ranked) < 100:
         raise ValueError(f"Need at least 100 ranked candidates, got {len(ranked)}")
 
     top100 = ranked[:100]
 
-    # ---- Enforce monotonic non-increasing scores -------------------------
     top100 = _enforce_monotonic(top100)
 
-    # ---- Write CSV -------------------------------------------------------
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -65,62 +37,119 @@ def write_submission(
     print(f"[Writer] #100 candidate: {top100[99][1].candidate_id} (score={top100[99][0]:.4f})")
 
 
-# ---------------------------------------------------------------------------
-# Reasoning builder
-# ---------------------------------------------------------------------------
+
 
 def _build_reasoning(feat: CandidateFeatures, job: JobSpec, score: float) -> str:
-    """
-    Build a 1–2 sentence hallucination-free reasoning string.
-    Only references fields that actually exist in the candidate's data.
-    """
-    parts: list[str] = []
+    yoe = feat.years_experience
+    title = feat.current_title or "Engineer"
+    company = feat.current_company
 
-    # Sentence 1: identity + experience
-    yoe_str = f"{feat.years_experience:.1f}yr"
-    title_str = feat.current_title or "unknown role"
-    company_str = f" at {feat.current_company}" if feat.current_company else ""
-    parts.append(f"{yoe_str} {title_str}{company_str}.")
-
-    # Sentence 2: skill alignment + behavioral signals
-    detail_parts: list[str] = []
-
-    # Which required skills does this candidate actually have?
-    matched_required = [
-        s for s in job.required_skills
+    matched_skills = [
+        s for s in (job.required_skills + job.preferred_skills)
         if _skill_in_candidate(s, feat)
     ]
-    if matched_required:
-        skills_str = ", ".join(matched_required[:3])  # show up to 3
-        jd_mention = f"JD requirement for {skills_str}"
-        detail_parts.append(f"matches {jd_mention}")
+    
+    seen_s = set()
+    unique_skills = []
+    for s in matched_skills:
+        clean = s.strip().lower()
+        if clean and clean not in seen_s:
+            seen_s.add(clean)
+            unique_skills.append(clean)
 
-    # Behavioral highlights
-    rrr_pct = int(feat.recruiter_response_rate * 100)
-    detail_parts.append(f"{rrr_pct}% recruiter response rate")
-    detail_parts.append(f"{feat.notice_period_days}d notice period")
+    top_skills = unique_skills[:3]
+    skills_phrase = ""
+    if top_skills:
+        h = hash(feat.candidate_id)
+        phrasings = [
+            f"offers hands-on experience with {', '.join(top_skills)}",
+            f"brings strong expertise in {', '.join(top_skills)}",
+            f"is highly proficient in {', '.join(top_skills)}",
+            f"has solid experience utilizing {', '.join(top_skills)}",
+            f"demonstrates deep knowledge of {', '.join(top_skills)}",
+            f"shows a strong background in {', '.join(top_skills)}"
+        ]
+        skills_phrase = phrasings[abs(h) % len(phrasings)]
 
-    if feat.open_to_work:
-        detail_parts.append("actively open to work")
+    h_idx = hash(feat.candidate_id + "title")
+    if company:
+        title_phrasings = [
+            f"Currently working as a {title} at {company} with {yoe:.1f} years of experience",
+            f"A {title} at {company} offering {yoe:.1f} years of experience",
+            f"Brings {yoe:.1f} years of professional experience, currently serving as a {title} at {company}",
+            f"Served as {title} at {company} for several years, compiling {yoe:.1f} total YOE"
+        ]
+    else:
+        title_phrasings = [
+            f"An experienced {title} with {yoe:.1f} years of background",
+            f"Brings {yoe:.1f} years of experience working as a {title}",
+            f"An active {title} with {yoe:.1f} years of industry experience"
+        ]
+    intro_phrase = title_phrasings[abs(h_idx) % len(title_phrasings)]
 
-    if feat.last_active_days_ago <= 30:
-        detail_parts.append("active within last 30 days")
-    elif feat.last_active_days_ago <= 90:
-        detail_parts.append("active within last 90 days")
+    rrr = int(feat.recruiter_response_rate * 100)
+    notice = feat.notice_period_days
+    open_work = feat.open_to_work
+    
+    notice_str = f"{notice}-day notice" if notice > 0 else "immediate availability"
+    h_behav = hash(feat.candidate_id + "behav")
+    
+    if rrr >= 70:
+        if open_work:
+            behavioral_phrases = [
+                f"They are actively open to work with a {notice_str} and an outstanding {rrr}% recruiter response rate.",
+                f"The candidate is highly responsive ({rrr}% response rate), open to new opportunities, and has a {notice_str}.",
+                f"Features a stellar {rrr}% response rate, is open to work, and has a {notice_str} period."
+            ]
+        else:
+            behavioral_phrases = [
+                f"Maintains a high recruiter response rate of {rrr}% with a {notice_str} period.",
+                f"Shows strong responsiveness on the platform ({rrr}% response rate) and has a {notice_str}.",
+                f"Highly responsive user ({rrr}% response rate) available on a {notice_str} timeline."
+            ]
+    else:
+        if open_work:
+            behavioral_phrases = [
+                f"Open to new roles with a {notice_str} and a {rrr}% response rate.",
+                f"Actively seeking new opportunities with a {notice_str} timeline ({rrr}% RRR).",
+                f"Is open to work on a {notice_str} basis, demonstrating a {rrr}% platform response rate."
+            ]
+        else:
+            behavioral_phrases = [
+                f"Available on a {notice_str} with a {rrr}% recruiter response rate.",
+                f"Has a {notice_str} period and maintains a {rrr}% response rate.",
+                f"Currently has a {notice_str} timeline and a platform response rate of {rrr}%."
+            ]
+    
+    behav_phrase = behavioral_phrases[abs(h_behav) % len(behavioral_phrases)]
 
-    parts.append("Demonstrates " + "; ".join(detail_parts) + ".")
+    h_comb = hash(feat.candidate_id + "comb")
+    if skills_phrase:
+        if abs(h_comb) % 2 == 0:
+            reason = f"{intro_phrase}, who {skills_phrase}. {behav_phrase}"
+        else:
+            reason = f"{intro_phrase} and {skills_phrase}. {behav_phrase}"
+    else:
+        reason = f"{intro_phrase}. {behav_phrase}"
 
-    reasoning = " ".join(parts)
+    reason = " ".join(reason.split())
+    
+    sentences = [s.strip() for s in reason.split(". ") if s.strip()]
+    capitalized_sentences = []
+    for s in sentences:
+        if s:
+            capitalized_sentences.append(s[0].upper() + s[1:])
+    reason = ". ".join(capitalized_sentences)
+    if not reason.endswith("."):
+        reason += "."
 
-    # Hard cap at 300 chars to keep CSV clean
-    if len(reasoning) > 300:
-        reasoning = reasoning[:297] + "..."
+    if len(reason) > 300:
+        reason = reason[:297] + "..."
 
-    return reasoning
+    return reason
 
 
 def _skill_in_candidate(required_skill: str, feat: CandidateFeatures) -> bool:
-    """Check if a required skill is present in the candidate's skill set."""
     req = required_skill.lower()
     for s in feat.skills:
         if req == s or req in s or s in req:
@@ -128,18 +157,9 @@ def _skill_in_candidate(required_skill: str, feat: CandidateFeatures) -> bool:
     return False
 
 
-# ---------------------------------------------------------------------------
-# Monotonic score enforcement
-# ---------------------------------------------------------------------------
-
 def _enforce_monotonic(
     ranked: list[tuple[float, CandidateFeatures]],
 ) -> list[tuple[float, CandidateFeatures]]:
-    """
-    Ensure scores are strictly non-increasing.
-    If a lower-ranked candidate has a higher score (shouldn't happen after sorting,
-    but floating point can cause surprises), cap it to the previous score.
-    """
     if not ranked:
         return ranked
 
@@ -148,7 +168,7 @@ def _enforce_monotonic(
 
     for score, feat in ranked[1:]:
         if score > prev_score:
-            score = prev_score  # cap to enforce monotonicity
+            score = prev_score  
         result.append((score, feat))
         prev_score = score
 

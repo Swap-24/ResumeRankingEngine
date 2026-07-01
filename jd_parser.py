@@ -1,26 +1,10 @@
-"""
-jd_parser.py — Dynamic Job Description parser.
 
-Reads a .docx file and produces a structured JobSpec.
-Strategy:
-  - Uses python-docx paragraph STYLES (Heading 1, Heading 2, List Bullet, etc.)
-    for structural parsing — more robust than regex for DOCX files.
-  - Falls back to regex keyword matching for plain-text or odd-formatted JDs.
-
-Zero hardcoded skills — everything is extracted from the document text.
-"""
 
 import re
 from pathlib import Path
 from docx import Document
 from models.job_spec import JobSpec
 
-
-# ---------------------------------------------------------------------------
-# Section classification — matched against Heading text (case-insensitive)
-# ---------------------------------------------------------------------------
-
-# Any heading whose text contains one of these → required skills section
 _REQUIRED_HEADING_TOKENS = {
     "absolutely need", "must have", "mandatory", "required", "non-negotiable",
     "core skill", "minimum qualif", "basic qualif", "key skill", "essential",
@@ -44,15 +28,7 @@ _YOE_RANGE  = re.compile(r"(\d+)\s*[–\-to]+\s*(\d+)\s*(?:years?|yrs?)", re.IGN
 _YOE_MIN    = re.compile(r"(\d+)\+?\s*(?:years?|yrs?)\s*(?:of\s+)?(?:experience|exp)", re.IGNORECASE)
 
 
-# ---------------------------------------------------------------------------
-# Main parser
-# ---------------------------------------------------------------------------
-
 def parse_jd(path: str) -> JobSpec:
-    """
-    Parse a .docx JD file and return a structured JobSpec.
-    Handles any JD format — no hardcoded domain assumptions.
-    """
     doc_path = Path(path)
     if not doc_path.exists():
         raise FileNotFoundError(f"JD file not found: {path}")
@@ -61,30 +37,15 @@ def parse_jd(path: str) -> JobSpec:
     paragraphs = doc.paragraphs  # preserve style info
 
     full_text = "\n".join(p.text.strip() for p in paragraphs if p.text.strip())
-
-    # ------------------------------------------------------------------
-    # 1. Title — first paragraph with a 'Title' or 'Heading 1' style,
-    #    or just the first non-empty paragraph
-    # ------------------------------------------------------------------
     title = _extract_title(paragraphs)
 
-    # ------------------------------------------------------------------
-    # 2. YOE bounds
-    # ------------------------------------------------------------------
     min_exp, max_exp = _extract_yoe(full_text)
 
-    # ------------------------------------------------------------------
-    # 3. Intent text — for career-alignment embedding
-    # ------------------------------------------------------------------
     intent_sentences = _extract_sentences(full_text)[:6]
     intent_text = f"{title}. " + " ".join(intent_sentences)
 
-    # ------------------------------------------------------------------
-    # 4. Parse skill sections using heading styles
-    # ------------------------------------------------------------------
     required_skills, preferred_skills, disqualifiers = _parse_skill_sections(paragraphs)
 
-    # Fallback: if still empty, pull from full text using capitalized tokens
     if not required_skills:
         required_skills = _fallback_skill_extract(full_text)
 
@@ -99,10 +60,6 @@ def parse_jd(path: str) -> JobSpec:
         disqualifiers=disqualifiers,
     )
 
-
-# ---------------------------------------------------------------------------
-# Section parsers
-# ---------------------------------------------------------------------------
 
 def _extract_title(paragraphs) -> str:
     """Return the first non-empty paragraph styled as Title or Heading."""
@@ -123,10 +80,6 @@ def _extract_title(paragraphs) -> str:
 
 
 def _parse_skill_sections(paragraphs) -> tuple[list[str], list[str], list[str]]:
-    """
-    Walk paragraphs by style. When a Heading 1/2 is encountered that matches
-    a known category, collect all subsequent bullet/list items until the next heading.
-    """
     required: list[str] = []
     preferred: list[str] = []
     disqualifiers: list[str] = []
@@ -141,7 +94,6 @@ def _parse_skill_sections(paragraphs) -> tuple[list[str], list[str], list[str]]:
         style = p.style.name.lower()
         text_lower = text.lower()
 
-        # ---- Check if this paragraph is a section heading ---------------
         if "heading" in style:
             if _matches_any(text_lower, _REQUIRED_HEADING_TOKENS):
                 mode = "required"
@@ -153,7 +105,6 @@ def _parse_skill_sections(paragraphs) -> tuple[list[str], list[str], list[str]]:
                 mode = "none"
             continue
 
-        # ---- Harvest list items in the active section -------------------
         if mode == "none":
             continue
 
@@ -170,8 +121,6 @@ def _parse_skill_sections(paragraphs) -> tuple[list[str], list[str], list[str]]:
             tokens = _extract_skill_tokens_from_bullet(text)
             preferred.extend(tokens)
         elif mode == "disqualifier":
-            # Store as phrases (for full-text penalty matching)
-            # Shorten to first 120 chars, keep as meaningful phrase
             disqualifiers.append(_summarize_disqualifier(text))
 
     return (
@@ -182,30 +131,19 @@ def _parse_skill_sections(paragraphs) -> tuple[list[str], list[str], list[str]]:
 
 
 def _extract_skill_tokens_from_bullet(text: str) -> list[str]:
-    """
-    Extract technology/skill tokens from a bullet point.
-    Handles parenthetical examples: "vector databases (Pinecone, Weaviate, Qdrant)"
-    Also extracts parenthetical tech names as individual skills.
-    """
     tokens: list[str] = []
 
-    # Step 1: Extract parenthetical tech lists (often the most specific)
     parens = re.findall(r"\(([^)]+)\)", text)
     for paren in parens:
-        # Paren contents are often comma-separated tech names
         inner_tokens = [t.strip().lower() for t in re.split(r"[,/]", paren)]
         tokens.extend(t for t in inner_tokens if _is_skill_like(t))
 
-    # Step 2: Remove parentheticals to extract the main skill phrase
     clean = re.sub(r"\([^)]*\)", "", text).strip()
-    # Strip bullet characters
     clean = re.sub(r"^[\u2022\u2013\u2014\-\*\>\•·]\s*", "", clean).strip()
 
-    # Step 3: Split on common delimiters
     parts = re.split(r"[,;/]|\band\b|\bor\b", clean, flags=re.IGNORECASE)
     for part in parts:
         part = part.strip().lower()
-        # Take the first meaningful noun phrase of each part (stop at verbs/prepositions)
         phrase = _extract_leading_skill(part)
         if phrase and _is_skill_like(phrase):
             tokens.append(phrase)
@@ -214,28 +152,19 @@ def _extract_skill_tokens_from_bullet(text: str) -> list[str]:
 
 
 def _extract_leading_skill(text: str) -> str:
-    """
-    From a longer phrase, extract the leading skill/technology name.
-    E.g. "production experience with embeddings-based retrieval systems" → "embeddings-based retrieval"
-    """
-    # Remove common lead-ins
     text = re.sub(
         r"^(production|hands.on|strong|prior|experience with|exposure to|"
         r"background in|solid|deep|working knowledge of|familiarity with)\s+",
         "", text, flags=re.IGNORECASE
     ).strip()
-
-    # Take first 4 words max (skill names are rarely longer)
     words = text.split()[:5]
     phrase = " ".join(words).rstrip(".,;:")
     return phrase[:60]
 
 
 def _is_skill_like(text: str) -> bool:
-    """Return True if text looks like a skill/technology name."""
     if not text or len(text) < 2 or len(text) > 60:
         return False
-    # Filter stopwords and meta-words
     stopwords = {
         "the", "this", "that", "we", "our", "your", "you", "are", "is", "will",
         "have", "has", "for", "and", "or", "but", "not", "with", "in", "on", "at",
@@ -248,20 +177,13 @@ def _is_skill_like(text: str) -> bool:
     first_word = text.split()[0].lower().strip(".,;:")
     if first_word in stopwords:
         return False
-    # Must have at least one alphanumeric word of length ≥ 2
     return bool(re.search(r"[a-z0-9]{2,}", text))
 
 
 def _summarize_disqualifier(text: str) -> str:
-    """
-    Produce a compact disqualifier phrase for penalty matching.
-    Extract the key negative trait from a disqualifier bullet.
-    """
     text = text.lower()
-    # Strip bullets
     text = re.sub(r"^[\u2022\u2013\u2014\-\*\>\•·]\s*", "", text).strip()
 
-    # Look for patterns like "if you...", "people who...", "candidates who..."
     for prefix in ["if you've", "if you", "people who", "candidates who", "those who"]:
         if text.startswith(prefix):
             text = text[len(prefix):].strip()
@@ -269,10 +191,6 @@ def _summarize_disqualifier(text: str) -> str:
 
     return text[:150].strip()
 
-
-# ---------------------------------------------------------------------------
-# YOE extraction
-# ---------------------------------------------------------------------------
 
 def _extract_yoe(text: str) -> tuple[float, float]:
     m = _YOE_RANGE.search(text)
@@ -284,10 +202,6 @@ def _extract_yoe(text: str) -> tuple[float, float]:
         return val, val + 10.0
     return 0.0, 50.0
 
-
-# ---------------------------------------------------------------------------
-# Sentence / token utilities
-# ---------------------------------------------------------------------------
 
 def _extract_sentences(text: str) -> list[str]:
     sentences = re.split(r"(?<=[.!?])\s+", text)
