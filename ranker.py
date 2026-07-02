@@ -92,27 +92,40 @@ def _skill_overlap_score(feat: CandidateFeatures, required: set[str], preferred:
         return 0.5
 
     earned = 0.0
+    candidate_tokens = {
+        skill: set(skill.split())
+        for skill in feat.skills
+    }
 
     for skill_name in required:
-        matched_weight = _fuzzy_skill_match(skill_name, feat)
+        matched_weight = _fuzzy_skill_match(skill_name, feat, candidate_tokens)
         earned += matched_weight
 
     for skill_name in preferred:
-        matched_weight = _fuzzy_skill_match(skill_name, feat)
+        matched_weight = _fuzzy_skill_match(skill_name, feat, candidate_tokens)
         earned += 0.5 * matched_weight
 
     return min(earned / total_possible, 1.0)
 
 
-def _fuzzy_skill_match(required_skill: str, feat: CandidateFeatures) -> float:
+def _fuzzy_skill_match(
+    required_skill: str,
+    feat: CandidateFeatures,
+    candidate_tokens: dict[str, set[str]] | None = None,
+) -> float:
     req = required_skill.lower()
     req_tokens = set(req.split())
+    if candidate_tokens is None:
+        candidate_tokens = {
+            skill: set(skill.split())
+            for skill in feat.skills
+        }
 
     best_weight = 0.0
 
     for cand_skill in feat.skills:
         weight = feat.skill_weights.get(cand_skill, 0.0)
-        cand_tokens = set(cand_skill.split())
+        cand_tokens = candidate_tokens[cand_skill]
 
         if req == cand_skill:
             return weight

@@ -49,7 +49,7 @@ def embed_candidates(
         show_progress_bar=True,
     )
 
-    return embeddings.astype(np.float32)
+    return embeddings.astype(np.float32, copy=False)
 
 
 def embed_career_only(
@@ -73,7 +73,7 @@ def embed_career_only(
         show_progress_bar=False,
     )
 
-    return embeddings.astype(np.float32)
+    return embeddings.astype(np.float32, copy=False)
 
 
 
