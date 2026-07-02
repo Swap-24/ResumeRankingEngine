@@ -1,5 +1,6 @@
 
 import gzip
+import heapq
 import json
 from datetime import date, datetime
 from pathlib import Path
@@ -31,6 +32,9 @@ def stream_and_filter(
     job: JobSpec,
     today: date | None = None,
     max_candidates: int = 2000,
+    min_response_rate: float = 0.05,
+    max_inactive_days: int = 365,
+    min_completeness: float = 20.0,
 ) -> list[CandidateFeatures]:
     
     if today is None:
@@ -45,6 +49,7 @@ def stream_and_filter(
     soft_discarded = 0
 
     print(f"[Filter] Streaming and scoring candidates against '{job.title}'...")
+    jd_words, title_words = _build_job_match_terms(job)
 
     with open_fn(str(path), "rt", encoding="utf-8") as fh:
         for line in fh:
@@ -61,7 +66,25 @@ def stream_and_filter(
 
             is_honeypot, _ = _check_honeypots(raw)
 
-            h_score = _compute_heuristic_score(raw, job, today, is_honeypot)
+            is_deadweight, _ = _check_deadweight(
+                raw,
+                today,
+                min_response_rate=min_response_rate,
+                max_inactive_days=max_inactive_days,
+                min_completeness=min_completeness,
+            )
+            if is_deadweight:
+                soft_discarded += 1
+                continue
+
+            h_score = _compute_heuristic_score(
+                raw,
+                job,
+                today,
+                is_honeypot,
+                jd_words=jd_words,
+                title_words=title_words,
+            )
 
             try:
                 features = _extract_features(raw, today)
@@ -72,18 +95,29 @@ def stream_and_filter(
             features.is_honeypot = is_honeypot
             scored_candidates.append((h_score, features))
 
-    scored_candidates.sort(key=lambda x: (-x[0], x[1].candidate_id))
-
-    survivors = [feat for _, feat in scored_candidates[:max_candidates]]
+    top_candidates = heapq.nsmallest(
+        max_candidates,
+        scored_candidates,
+        key=lambda x: (-x[0], x[1].candidate_id),
+    )
+    survivors = [feat for _, feat in top_candidates]
 
     print(
         f"[Filter] Total candidates: {total} | Selected top {len(survivors)} "
-        f"for semantic ranking | Hard-discarded: {hard_discarded}"
+        f"for semantic ranking | Hard-discarded: {hard_discarded} | "
+        f"Soft-discarded: {soft_discarded}"
     )
     return survivors
 
 
-def _compute_heuristic_score(raw: dict, job: JobSpec, today: date, is_honeypot: bool) -> float:
+def _compute_heuristic_score(
+    raw: dict,
+    job: JobSpec,
+    today: date,
+    is_honeypot: bool,
+    jd_words: set[str] | None = None,
+    title_words: set[str] | None = None,
+) -> float:
     if is_honeypot:
         return -999999.0  
 
@@ -100,13 +134,8 @@ def _compute_heuristic_score(raw: dict, job: JobSpec, today: date, is_honeypot: 
         deviation = min(abs(yoe - job.min_experience), abs(yoe - job.max_experience))
         score -= deviation * 3.0
 
-    jd_skills = set(job.required_skills) | set(job.preferred_skills)
-    jd_words = set()
-    for s in jd_skills:
-        for w in s.replace("-", " ").split():
-            w = w.strip().lower()
-            if len(w) > 2 and w not in ["experience", "systems", "development", "production", "frameworks", "infrastructure", "role", "team", "with", "for", "the"]:
-                jd_words.add(w)
+    if jd_words is None or title_words is None:
+        jd_words, title_words = _build_job_match_terms(job)
 
     matched_skills = 0
     for s in skills:
@@ -119,12 +148,6 @@ def _compute_heuristic_score(raw: dict, job: JobSpec, today: date, is_honeypot: 
                 break
     score += matched_skills * 2.5
 
-    title_words = set(job.title.lower().replace("-", " ").replace("/", " ").split())
-    title_words = {
-        w for w in title_words 
-        if len(w) > 2 and w not in ["senior", "founding", "lead", "junior", "staff", "head", "manager", "team", "engineer"]
-    }
-    
     current_title = profile.get("current_title", "").lower()
     title_match = False
     for w in current_title.replace("-", " ").replace("/", " ").split():
@@ -156,6 +179,30 @@ def _compute_heuristic_score(raw: dict, job: JobSpec, today: date, is_honeypot: 
             pass
 
     return score
+
+
+def _build_job_match_terms(job: JobSpec) -> tuple[set[str], set[str]]:
+    skill_stopwords = {
+        "experience", "systems", "development", "production", "frameworks",
+        "infrastructure", "role", "team", "with", "for", "the",
+    }
+    jd_words = {
+        word.lower()
+        for skill in set(job.required_skills) | set(job.preferred_skills)
+        for word in skill.replace("-", " ").split()
+        if len(word) > 2 and word.lower() not in skill_stopwords
+    }
+
+    title_stopwords = {
+        "senior", "founding", "lead", "junior", "staff", "head", "manager",
+        "team", "engineer",
+    }
+    title_words = {
+        word
+        for word in job.title.lower().replace("-", " ").replace("/", " ").split()
+        if len(word) > 2 and word not in title_stopwords
+    }
+    return jd_words, title_words
 
 
 def _check_honeypots(raw: dict) -> tuple[bool, str]:

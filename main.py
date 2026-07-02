@@ -53,7 +53,6 @@ def main():
     print(f"  Required skills : {job.required_skills[:10]}")
     print(f"  Preferred skills: {job.preferred_skills[:5]}")
     print(f"  YOE range       : {job.min_experience}–{job.max_experience} years")
-    # Strip non-ASCII for safe console printing on Windows
     dq_preview = [d.encode('ascii', 'replace').decode('ascii')[:60] for d in job.disqualifiers[:3]]
     print(f"  Disqualifiers   : {dq_preview}")
     print(f"  JD parsed in {time.time()-t0:.1f}s")
@@ -75,20 +74,17 @@ def main():
     print("Stage 3: Semantic NLP Ranker...")
     print("="*60)
 
-    # 3a. Embed JD
     print("  Embedding JD...")
     t0 = time.time()
     jd_vec        = embed_jd(job)
     jd_intent_vec = embed_jd_intent(job)
     print(f"  JD embedded in {time.time()-t0:.2f}s")
 
-    # 3b. Embed all survivors (full semantic text)
     print(f"  Embedding {len(survivors)} candidate profiles...")
     t0 = time.time()
     cand_embeddings   = embed_candidates(survivors, batch_size=128)
     print(f"  Candidate embeddings done in {time.time()-t0:.1f}s")
 
-    # 3c. Score and rank
     print("  Scoring all candidates...")
     t0 = time.time()
     ranked = rank_candidates(
