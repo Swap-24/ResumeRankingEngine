@@ -46,6 +46,7 @@ def stream_and_filter(
     scored_candidates = []
     total = 0
     hard_discarded = 0
+    honeypots_discarded = 0
     soft_discarded = 0
 
     print(f"[Filter] Streaming and scoring candidates against '{job.title}'...")
@@ -65,6 +66,10 @@ def stream_and_filter(
                 continue
 
             is_honeypot, _ = _check_honeypots(raw)
+            if is_honeypot:
+                hard_discarded += 1
+                honeypots_discarded += 1
+                continue
 
             is_deadweight, _ = _check_deadweight(
                 raw,
@@ -105,7 +110,7 @@ def stream_and_filter(
     print(
         f"[Filter] Total candidates: {total} | Selected top {len(survivors)} "
         f"for semantic ranking | Hard-discarded: {hard_discarded} | "
-        f"Soft-discarded: {soft_discarded}"
+        f"Honeypots: {honeypots_discarded} | Soft-discarded: {soft_discarded}"
     )
     return survivors
 
@@ -126,6 +131,7 @@ def _compute_heuristic_score(
     profile = raw.get("profile", {})
     signals = raw.get("redrob_signals", {})
     skills = raw.get("skills", [])
+    education = raw.get("education", [])
 
     yoe = float(profile.get("years_of_experience", 0))
     if job.min_experience - 1.5 <= yoe <= job.max_experience + 3.0:
@@ -166,6 +172,12 @@ def _compute_heuristic_score(
 
     comp = float(signals.get("profile_completeness_score", 0.0))
     score += (comp / 100.0) * 5.0
+
+    best_education_rank = max(
+        (_EDUCATION_TIER_RANK.get(item.get("tier", ""), 0) for item in education),
+        default=0,
+    )
+    score += float(best_education_rank)
 
     last_active_str = signals.get("last_active_date", "")
     if last_active_str:
@@ -335,9 +347,11 @@ def _extract_features(raw: dict, today: date) -> CandidateFeatures:
         skills_set.add(name)
         skill_weights[name] = min(weight, 1.5)  # cap
 
-    edu_tier = ""
-    if education:
-        edu_tier = education[0].get("tier", "")
+    edu_tier = max(
+        (item.get("tier", "") for item in education),
+        key=lambda tier: _EDUCATION_TIER_RANK.get(tier, 0),
+        default="",
+    )
 
     last_active_str = signals.get("last_active_date", "")
     days_ago = 999
